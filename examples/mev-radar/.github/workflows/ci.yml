@@ -1,0 +1,32 @@
+name: mev-radar CI
+
+on:
+  push:
+    paths:
+      - 'examples/mev-radar/**'
+  pull_request:
+    paths:
+      - 'examples/mev-radar/**'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: examples/mev-radar
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/mev-radar -> target
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace

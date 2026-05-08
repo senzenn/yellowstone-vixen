@@ -1,0 +1,12 @@
+[package]
+name = "mev-radar-pools"
+description = "Pool price state map for mev-radar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+mev-radar-dex = { workspace = true }

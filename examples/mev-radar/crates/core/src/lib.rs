@@ -8,5 +8,9 @@
 pub mod config;
 pub mod error;
 pub mod grpc;
+pub mod radar;
+pub mod record;
+pub mod replay_run;
+pub mod swaps;
 
 pub use error::{Error, Result};

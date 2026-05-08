@@ -30,3 +30,20 @@ yellowstone-grpc-client = "12"
 yellowstone-grpc-proto = { version = "12", default-features = false }
 
 mev-radar-core = { path = "crates/core", version = "0.1.0" }
+mev-radar-dex = { path = "crates/dex", version = "0.1.0" }
+mev-radar-pools = { path = "crates/pools", version = "0.1.0" }
+mev-radar-arb = { path = "crates/arb", version = "0.1.0" }
+mev-radar-sandwich = { path = "crates/sandwich", version = "0.1.0" }
+mev-radar-replay = { path = "crates/replay", version = "0.1.0" }
+mev-radar-tui = { path = "crates/tui", version = "0.1.0" }
+
+# Pulled directly from the parent yellowstone-vixen workspace so this
+# example tracks the local Vixen sources without a published-crate hop.
+yellowstone-vixen-core = { path = "../../crates/core", default-features = false }
+
+bs58 = "0.5"
+serde_json = "1.0"
+ratatui = "0.29"
+crossterm = "0.28"
+prost = "0.14"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
