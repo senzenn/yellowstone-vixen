@@ -8,11 +8,14 @@
 
 use std::time::Duration;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use mev_radar_arb::{ArbConfig, ArbEvent};
 use mev_radar_dex::SwapEvent;
 use mev_radar_pools::PoolMap;
 use mev_radar_sandwich::{Detector as SandDetector, SandwichConfig, SandwichEvent};
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use crate::{
     config::{Config, EndpointConfig},
@@ -53,25 +56,40 @@ impl RadarOptions {
 
 /// Run the radar. Each detection is sent on the channel returned by the
 /// caller. The channel is closed when the radar exits.
+///
+/// The send path uses `try_send`, which drops events when the consumer
+/// is slower than the producer. Drop counts are surfaced via a
+/// `radar_drops` warning every 1024 drops so silent data loss is
+/// visible. If you need lossless capture, use `record` (which writes
+/// raw `SubscribeUpdate`s to disk before any in-process channelling).
 pub async fn run(endpoint: &EndpointConfig, opts: RadarOptions, tx: mpsc::Sender<Event>) -> Result<()> {
     let mut pools = PoolMap::new();
     let mut sand = SandDetector::new(opts.sandwich);
+    let drops = AtomicU64::new(0);
+
+    let try_send = |ev: Event| {
+        if tx.try_send(ev).is_err() {
+            let n = drops.fetch_add(1, Ordering::Relaxed) + 1;
+            if n.is_multiple_of(1024) {
+                warn!(total_drops = n, "radar event channel full; dropping");
+            }
+        }
+    };
 
     swaps::run(
         endpoint,
         SwapsOptions { stats_interval: opts.stats_interval },
         |ev: &SwapEvent| {
-            // Best-effort send; if the consumer is gone we drop silently.
-            let _ = tx.try_send(Event::Swap(ev.clone()));
+            try_send(Event::Swap(ev.clone()));
 
             pools.ingest(ev);
 
             for arb in mev_radar_arb::detect(&pools, opts.arb) {
-                let _ = tx.try_send(Event::Arb(arb));
+                try_send(Event::Arb(arb));
             }
 
             for hit in sand.push(ev.clone()) {
-                let _ = tx.try_send(Event::Sandwich(hit));
+                try_send(Event::Sandwich(hit));
             }
         },
     )

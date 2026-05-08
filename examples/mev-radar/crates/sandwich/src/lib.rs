@@ -96,7 +96,14 @@ impl Detector {
                 })
                 .collect();
 
-            if !victims.is_empty() {
+            let extracted = ev.amount_out as i128 - front.amount_in as i128;
+
+            // A genuine sandwich always extracts positive value in the
+            // attacker's `mint_in` of the front leg; negative or zero is
+            // a same-wallet roundtrip that lost / broke even, almost
+            // never an attack. Filter to cut down false positives from
+            // bot wallets doing legitimate periodic round-trips.
+            if !victims.is_empty() && extracted > 0 {
                 hits.push(SandwichEvent {
                     slot: ev.slot,
                     pool: ev.pool.clone(),
@@ -106,7 +113,7 @@ impl Detector {
                     victim_signatures: victims.iter().map(|v| v.signature.clone()).collect(),
                     front_amount_in: front.amount_in,
                     back_amount_out: ev.amount_out,
-                    extracted_amount: ev.amount_out as i128 - front.amount_in as i128,
+                    extracted_amount: extracted,
                 });
             }
         }

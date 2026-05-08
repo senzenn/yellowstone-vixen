@@ -22,6 +22,12 @@ use yellowstone_grpc_proto::geyser::SubscribeUpdate;
 
 const MAGIC: &[u8; 8] = b"MEVRADR1";
 
+/// Hard cap on a single frame body. A real `SubscribeUpdate` is at most
+/// a few MiB (a fat full-block message), so 16 MiB leaves plenty of
+/// headroom while preventing a corrupted or hostile file from making us
+/// allocate 4 GiB on a `vec![0; len]`.
+pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("io: {0}")]
@@ -30,6 +36,8 @@ pub enum Error {
     Decode(#[from] prost::DecodeError),
     #[error("bad magic; expected {expected:?}, got {got:?}")]
     BadMagic { expected: [u8; 8], got: [u8; 8] },
+    #[error("frame too large: {size} bytes (max {MAX_FRAME_BYTES})")]
+    FrameTooLarge { size: usize },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -89,6 +97,10 @@ impl<R: AsyncReadExt + Unpin> Player<R> {
         }
 
         let len = u32::from_le_bytes(len_buf) as usize;
+        if len > MAX_FRAME_BYTES {
+            return Err(Error::FrameTooLarge { size: len });
+        }
+
         let mut body = vec![0u8; len];
         self.r.read_exact(&mut body).await?;
         let msg = SubscribeUpdate::decode(body.as_slice())?;
@@ -115,6 +127,19 @@ mod tests {
     use yellowstone_grpc_proto::geyser::{subscribe_update::UpdateOneof, SubscribeUpdatePong};
 
     use super::*;
+
+    #[tokio::test]
+    async fn rejects_oversized_frame() {
+        // Magic + a u32 length larger than MAX_FRAME_BYTES.
+        let mut buf: Vec<u8> = Vec::new();
+        buf.extend_from_slice(MAGIC);
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        // No body needed — the guard fires before we read it.
+
+        let mut player = Player::new(buf.as_slice()).await.unwrap();
+        let err = player.next().await.unwrap_err();
+        assert!(matches!(err, Error::FrameTooLarge { .. }));
+    }
 
     #[tokio::test]
     async fn round_trips_a_pong() {

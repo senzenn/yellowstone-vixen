@@ -50,23 +50,40 @@ pub fn try_parse_swap(ix: &InstructionUpdate) -> Option<SwapEvent> {
     None
 }
 
-/// Walk an instruction tree (top-level + CPIs) and collect every swap
-/// event, deduplicated by signature + path.
+/// Walk an instruction tree (top-level + CPIs) and collect swap events.
+///
+/// **Dedup contract**: at most one [`SwapEvent`] is emitted per
+/// transaction signature. This is required because [`SwapEvent`] amounts
+/// are derived from tx-level token-balance deltas — a Jupiter-style route
+/// containing N swap instructions would otherwise produce N copies of
+/// the same `(mint_in, amount_in, mint_out, amount_out)` with only the
+/// `pool` differing, which would in turn pollute the pool map and
+/// double-count sandwich windows. The first matching swap wins; future
+/// versions with IDL-driven per-instruction amounts can drop the dedup.
 #[must_use]
 pub fn collect_swaps(top_level: &[InstructionUpdate]) -> Vec<SwapEvent> {
     let mut out = Vec::new();
+    let mut seen_signatures = std::collections::HashSet::<Vec<u8>>::new();
+
     for ix in top_level {
-        walk(ix, &mut out);
+        walk(ix, &mut out, &mut seen_signatures);
     }
+
     out
 }
 
-fn walk(ix: &InstructionUpdate, out: &mut Vec<SwapEvent>) {
-    if let Some(ev) = try_parse_swap(ix) {
+fn walk(
+    ix: &InstructionUpdate,
+    out: &mut Vec<SwapEvent>,
+    seen: &mut std::collections::HashSet<Vec<u8>>,
+) {
+    if let Some(ev) = try_parse_swap(ix)
+        && seen.insert(ix.shared.signature.clone())
+    {
         out.push(ev);
     }
 
     for inner in &ix.inner {
-        walk(inner, out);
+        walk(inner, out, seen);
     }
 }

@@ -200,8 +200,12 @@ fn init_tracing(filter_override: Option<&str>) {
             .unwrap_or_else(|_| EnvFilter::new("info,mev_radar=info,mev_radar_core=info"))
     });
 
+    // Logs go to stderr so `swaps`, `radar`, and `replay` JSONL on
+    // stdout stays uncontaminated. This is the difference between
+    // `mev-radar radar | jq` working and silently dying on a `tracing
+    // info` line that isn't valid JSON.
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer().compact())
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr).compact())
         .init();
 }
