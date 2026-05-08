@@ -14,7 +14,15 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+mev-radar-arb = { workspace = true }
 mev-radar-core = { workspace = true }
+mev-radar-dex = { workspace = true }
+mev-radar-pools = { workspace = true }
+mev-radar-replay = { workspace = true }
+mev-radar-sandwich = { workspace = true }
+mev-radar-tui = { workspace = true }

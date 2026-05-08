@@ -25,17 +25,26 @@ pub struct Cli {
 pub enum Command {
     /// Day 1: subscribe to gRPC and print message counts.
     Watch {
-        /// Endpoint name from config.
         #[arg(long)]
         endpoint: String,
-
-        /// Stats logging interval in seconds.
         #[arg(long, default_value_t = 5)]
         stats_interval: u64,
-
-        /// Maximum messages before clean exit (0 = unlimited).
         #[arg(long, default_value_t = 0)]
         max_messages: u64,
+    },
+
+    /// Day 2: subscribe to DEX transactions and emit decoded swap events.
+    Swaps {
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long, default_value_t = 5)]
+        stats_interval: u64,
+    },
+
+    /// Day 4/5: live arb-spread + sandwich detection on top of swap stream.
+    Radar {
+        #[arg(long)]
+        endpoint: String,
     },
 
     /// Day 6: record a stream slice to a file.
@@ -44,11 +53,15 @@ pub enum Command {
         endpoint: String,
         #[arg(long)]
         out: PathBuf,
+        /// Maximum recording duration in seconds.
         #[arg(long, default_value_t = 60)]
         duration_secs: u64,
+        /// Maximum messages (0 = unlimited within duration).
+        #[arg(long, default_value_t = 0)]
+        max_messages: u64,
     },
 
-    /// Day 6: replay a captured stream.
+    /// Day 6: replay a captured stream through the radar pipeline.
     Replay {
         #[arg(value_name = "FILE")]
         file: PathBuf,

@@ -18,3 +18,11 @@ toml = { workspace = true }
 tracing = { workspace = true }
 yellowstone-grpc-client = { workspace = true }
 yellowstone-grpc-proto = { workspace = true }
+yellowstone-vixen-core = { workspace = true }
+mev-radar-arb = { workspace = true }
+mev-radar-dex = { workspace = true }
+mev-radar-pools = { workspace = true }
+mev-radar-replay = { workspace = true }
+mev-radar-sandwich = { workspace = true }
+serde_json = { workspace = true }
+bs58 = { workspace = true }

@@ -23,7 +23,7 @@ pub struct Config {
     pub runtime: RuntimeConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct EndpointConfig {
     pub name: String,
     pub url: String,
