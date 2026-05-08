@@ -1,0 +1,20 @@
+[package]
+name = "mev-radar"
+description = "Real-time arbitrage and sandwich-MEV observatory on Yellowstone gRPC"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mev-radar"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+mev-radar-core = { workspace = true }
