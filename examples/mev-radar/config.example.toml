@@ -1,0 +1,28 @@
+# Save to $XDG_CONFIG_HOME/mev-radar/config.toml
+# (default: ~/.config/mev-radar/config.toml).
+
+[[endpoints]]
+name = "mainnet"
+url = "https://your-grpc-endpoint:10000"
+# x-token loaded from this env var (preferred):
+x_token_env = "YGRPC_TOKEN"
+# Or from a file (single line, trimmed):
+# x_token_file = "/run/secrets/ygrpc_token"
+
+# Add more endpoints by repeating [[endpoints]] blocks.
+# [[endpoints]]
+# name = "devnet"
+# url = "https://devnet-grpc.example.com:10000"
+
+[detector.arb]
+# Minimum cross-pool price spread (basis points) before emitting an
+# ArbEvent. 30 bps ≈ 0.3%.
+min_spread_bps = 30
+
+[detector.sandwich]
+# Sliding window in slots used by the sandwich classifier.
+window_slots = 1
+
+[runtime]
+# How often the watch loop logs throughput stats.
+stats_interval_secs = 5

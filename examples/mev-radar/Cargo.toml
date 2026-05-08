@@ -1,0 +1,32 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+# This sub-workspace is intentionally excluded from the parent
+# yellowstone-vixen workspace (see ../../Cargo.toml `exclude`). It pins its
+# own dependency versions so that `mev-radar` can iterate independently of
+# the Vixen release cycle.
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/senzenn/yellowstone-vixen"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1.0"
+dirs = "5.0"
+
+yellowstone-grpc-client = "12"
+yellowstone-grpc-proto = { version = "12", default-features = false }
+
+mev-radar-core = { path = "crates/core", version = "0.1.0" }
