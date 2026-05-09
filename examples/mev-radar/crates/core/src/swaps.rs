@@ -16,13 +16,13 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
 use yellowstone_grpc_proto::geyser::{
-    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequest,
-    SubscribeRequestFilterTransactions, SubscribeRequestPing,
+    subscribe_update::UpdateOneof, SubscribeRequest, SubscribeRequestFilterTransactions,
+    SubscribeRequestPing,
 };
 use yellowstone_vixen_core::{instruction::InstructionUpdate, TransactionUpdate};
 
 use crate::{
-    config::EndpointConfig,
+    config::{Commitment, EndpointConfig},
     error::{Error, Result},
 };
 
@@ -33,10 +33,16 @@ const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone, Copy)]
 pub struct SwapsOptions {
     pub stats_interval: Duration,
+    pub commitment: Commitment,
 }
 
 impl Default for SwapsOptions {
-    fn default() -> Self { Self { stats_interval: Duration::from_secs(5) } }
+    fn default() -> Self {
+        Self {
+            stats_interval: Duration::from_secs(5),
+            commitment: Commitment::default(),
+        }
+    }
 }
 
 /// Run the swap-detection loop. Each detected swap is passed to `on_swap`.
@@ -80,7 +86,7 @@ async fn subscribe_once<F: FnMut(&SwapEvent)>(
 
     info!(name = %endpoint.name, "connected (swaps mode)");
 
-    let req = build_subscribe_request();
+    let req = build_subscribe_request(opts.commitment);
     let (mut sub_tx, stream) = client
         .subscribe_with_request(Some(req))
         .await
@@ -172,7 +178,7 @@ async fn subscribe_once<F: FnMut(&SwapEvent)>(
     }
 }
 
-fn build_subscribe_request() -> SubscribeRequest {
+fn build_subscribe_request(commitment: Commitment) -> SubscribeRequest {
     let mut transactions = HashMap::new();
 
     transactions.insert(
@@ -192,7 +198,7 @@ fn build_subscribe_request() -> SubscribeRequest {
 
     SubscribeRequest {
         transactions,
-        commitment: Some(CommitmentLevel::Processed as i32),
+        commitment: Some(commitment.as_grpc_i32()),
         ..Default::default()
     }
 }

@@ -107,6 +107,13 @@ impl PoolMap {
         self.quotes.keys().map(|(_p, pair)| pair)
     }
 
+    /// Iterate every (pool, pair) → quote entry. The arb detector needs
+    /// this to bucket by pair without hitting `quotes_for_pair` once
+    /// per pair (which is O(N) each).
+    pub fn iter_quotes(&self) -> impl Iterator<Item = (&(String, Pair), &PoolQuote)> {
+        self.quotes.iter()
+    }
+
     #[must_use]
     pub fn len(&self) -> usize { self.quotes.len() }
 

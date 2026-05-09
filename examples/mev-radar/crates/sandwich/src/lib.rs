@@ -58,6 +58,26 @@ impl Detector {
     #[must_use]
     pub fn new(cfg: SandwichConfig) -> Self { Self { cfg, by_pool: Default::default() } }
 
+    /// Drop ring-buffer entries older than `now_slot - window_slots`
+    /// across **all** pools, and prune deques that empty out. The
+    /// per-pool `push` path only GCs the pool it touches, so pools
+    /// that go silent leak their last events forever; `gc` plugs that.
+    /// Call periodically from the radar loop.
+    pub fn gc(&mut self, now_slot: u64) {
+        let cutoff = now_slot.saturating_sub(self.cfg.window_slots);
+
+        self.by_pool.retain(|_, buf| {
+            while buf.front().is_some_and(|e| e.slot < cutoff) {
+                buf.pop_front();
+            }
+            !buf.is_empty()
+        });
+    }
+
+    /// Number of pools currently tracked. Useful for stats / metrics.
+    #[must_use]
+    pub fn pool_count(&self) -> usize { self.by_pool.len() }
+
     /// Ingest a swap event. Returns any sandwiches detected by this push.
     pub fn push(&mut self, ev: SwapEvent) -> Vec<SandwichEvent> {
         // Garbage-collect stale events in this pool.
@@ -162,5 +182,21 @@ mod tests {
         d.push(ev(100, "front", "atk", "USDC", "SOL", 1_000, 10));
         let hits = d.push(ev(100, "back", "atk", "SOL", "USDC", 10, 1_050));
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn gc_drops_inactive_pools() {
+        let mut d = Detector::new(SandwichConfig { window_slots: 10 });
+
+        d.push(ev(100, "x", "alice", "A", "B", 1, 1));
+        let mut other = ev(100, "y", "bob", "A", "B", 1, 1);
+        other.pool = "P2".into();
+        d.push(other);
+
+        assert_eq!(d.pool_count(), 2);
+
+        // Advance well past the window — both pools' events expire.
+        d.gc(200);
+        assert_eq!(d.pool_count(), 0);
     }
 }

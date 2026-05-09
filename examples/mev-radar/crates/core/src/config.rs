@@ -67,11 +67,49 @@ impl Default for SandwichConfig {
 #[derive(Debug, Deserialize)]
 pub struct RuntimeConfig {
     /// How often the watch loop logs throughput stats.
+    #[serde(default = "default_stats_interval")]
     pub stats_interval_secs: u64,
+
+    /// Commitment level for stream subscriptions. `Processed` is lowest
+    /// latency but can produce signals that are later rolled back by a
+    /// fork; `Confirmed` adds ~2-slot latency but is fork-stable;
+    /// `Finalized` waits longer still. Default: `Processed`.
+    #[serde(default)]
+    pub commitment: Commitment,
 }
 
+fn default_stats_interval() -> u64 { 5 }
+
 impl Default for RuntimeConfig {
-    fn default() -> Self { Self { stats_interval_secs: 5 } }
+    fn default() -> Self {
+        Self {
+            stats_interval_secs: default_stats_interval(),
+            commitment: Commitment::default(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Commitment {
+    #[default]
+    Processed,
+    Confirmed,
+    Finalized,
+}
+
+impl Commitment {
+    /// Convert to the gRPC enum value. Inlined here to keep
+    /// `mev-radar-core` decoupled from caller-side imports.
+    #[must_use]
+    pub fn as_grpc_i32(self) -> i32 {
+        use yellowstone_grpc_proto::geyser::CommitmentLevel as G;
+        match self {
+            Self::Processed => G::Processed as i32,
+            Self::Confirmed => G::Confirmed as i32,
+            Self::Finalized => G::Finalized as i32,
+        }
+    }
 }
 
 impl Config {

@@ -8,6 +8,8 @@
 //! amount-deltas), so the scout signals on **executed** spreads, not
 //! resting-orderbook spreads. Bookable depth is out of scope for v0.1.
 
+use std::collections::HashMap;
+
 use mev_radar_dex::Dex;
 use mev_radar_pools::{Pair, PoolMap, PoolQuote};
 use serde::{Deserialize, Serialize};
@@ -35,39 +37,64 @@ impl Default for ArbConfig {
     fn default() -> Self { Self { min_spread_bps: 30 } }
 }
 
-/// Detect every arb opportunity present in the [`PoolMap`] right now.
+/// Detect arb opportunities in the [`PoolMap`].
 ///
-/// O(P²) per pair — fine for v0.1 where pair counts stay small.
+/// Algorithm: bucket quotes by pair, then for each pair compute the
+/// **best** arb — lowest-price buy pool vs highest-price sell pool —
+/// and emit if the spread crosses `min_spread_bps`. Per-pair work is
+/// O(P log P) for the sort, so the whole detector is
+/// O(N + Σ P_i log P_i) where N is the total quote count and P_i is
+/// the number of pools quoting pair i.
+///
+/// Output is **sorted deterministically** by `(slot, pair, spread_bps
+/// desc)` so golden-file replay tests are stable across runs and across
+/// HashMap iteration-order changes.
+///
+/// Returns at most one event per pair; if you need every pair-pair
+/// combination above threshold you'd want to change this to a windowed
+/// emit (not the v0.1 product shape).
 #[must_use]
 pub fn detect(map: &PoolMap, cfg: ArbConfig) -> Vec<ArbEvent> {
-    let mut out = Vec::new();
-    let mut seen_pairs = std::collections::HashSet::new();
+    let mut by_pair: HashMap<&Pair, Vec<&PoolQuote>> = HashMap::new();
 
-    for pair in map.pairs() {
-        if !seen_pairs.insert(pair.clone()) {
-            continue;
-        }
+    for ((_pool, pair), quote) in map.iter_quotes() {
+        by_pair.entry(pair).or_default().push(quote);
+    }
 
-        let quotes = map.quotes_for_pair(pair);
+    let mut out = Vec::with_capacity(by_pair.len());
+
+    for (pair, mut quotes) in by_pair {
         if quotes.len() < 2 {
             continue;
         }
 
-        for (i, lo) in quotes.iter().enumerate() {
-            for hi in &quotes[i + 1..] {
-                let (buy, sell) = if lo.price < hi.price {
-                    (*lo, *hi)
-                } else {
-                    (*hi, *lo)
-                };
+        // Sort ascending by price — buy is first, sell is last.
+        quotes.sort_by(|a, b| {
+            a.price
+                .partial_cmp(&b.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-                let bps = spread_bps(buy.price, sell.price);
-                if bps >= cfg.min_spread_bps {
-                    out.push(arb_event(buy, sell, bps));
-                }
-            }
+        let buy = quotes[0];
+        let sell = *quotes.last().expect("len >= 2");
+
+        let bps = spread_bps(buy.price, sell.price);
+        if bps < cfg.min_spread_bps {
+            continue;
         }
+
+        let _ = pair;
+        out.push(arb_event(buy, sell, bps));
     }
+
+    // Stable output ordering — see U-01 in AUDIT.md.
+    out.sort_by(|a, b| {
+        a.slot
+            .cmp(&b.slot)
+            .then_with(|| a.pair.0.cmp(&b.pair.0))
+            .then_with(|| a.pair.1.cmp(&b.pair.1))
+            .then_with(|| b.spread_bps.cmp(&a.spread_bps))
+    });
 
     out
 }
