@@ -105,7 +105,46 @@ in-process channelling).
 
 ---
 
-## Known caveats — not fixed in v0.1, documented and tracked for v0.2
+## Fixed in audit follow-up pass
+
+### C-03 (resolved) — commitment level is now configurable
+
+`runtime.commitment` in TOML accepts `processed` / `confirmed` /
+`finalized` (default `processed`). Threaded through `swaps`, `record`,
+and `radar` via a new `Commitment` enum on `core::config`. Users who
+need fork-stable signals at the cost of ~2-slot latency can flip the
+config without recompiling.
+
+### R-01 (resolved) — `record` now flushes on Ctrl-C
+
+`record::run` takes an `Arc<Notify>` cancel handle and is split into
+`run` (always calls `recorder.finish()`) and `run_inner` (the
+cancellable subscribe loop). The binary spawns a Ctrl-C bridge that
+notifies on signal, so the `BufWriter` is properly flushed and
+shutdown — no more truncated tails on graceful exit.
+
+### P-01 (resolved) — `arb::detect` is now O(N + Σ P_i log P_i)
+
+Replaced the O(P²) pairwise sweep with a per-pair sort and pick of
+`(min, max)` price quote. Emits at most one event per pair (the best
+opportunity), which is also a more useful product shape than "every
+combination above threshold". Iteration uses the new
+`PoolMap::iter_quotes()` so we bucket by pair in one pass instead of
+doing N `quotes_for_pair` scans.
+
+### P-02 (resolved) — sandwich `by_pool` GC
+
+Added `Detector::gc(now_slot)` that prunes both stale events **and**
+empty deques across all pools. The radar loop calls it once per slot
+transition. Test added: `gc_drops_inactive_pools`.
+
+### U-01 (resolved) — arb output is now deterministic
+
+`detect` sorts its output by `(slot, pair_base, pair_quote,
+spread_bps desc)` before returning, so golden-file replay tests are
+stable across HashMap iteration orders.
+
+## Known caveats — still deferred to v0.2
 
 ### C-01 (C, medium) — tx-level amounts attribute to the first matched pool
 
@@ -113,49 +152,23 @@ Because of B-02's fix, a Jupiter route emits **one** event referencing
 **one** pool, even if the route hit 3 pools. The reported amounts are
 correct (they're the wallet's tx-net delta), but the pool attribution
 is "first swap detected" — the other pools in the route get no event
-and the arb detector misses cross-pool spreads on hop 2 / 3. v0.2's
-Codama-IDL parsing fixes this by giving per-instruction amounts.
+and the arb detector misses cross-pool spreads on hop 2 / 3.
+**Why deferred**: a real fix needs per-instruction `amount_in /
+amount_out`, which requires either Codama-IDL-driven parsing or
+hand-coded byte-layout decoders for each DEX. Both are v0.2 work — a
+mitigation here would either still produce wrong numbers (per-pool
+events with the same tx-level amounts → false arb signals) or block
+on the same byte-layout work.
 
 ### C-02 (C, low) — `PoolMap` only refreshes on observed swaps
 
 Pools that just receive deposits / withdrawals without swaps don't
-update price. v0.2 will add per-DEX account-data decoders so reserves
-refresh on every account update, not just every swap.
-
-### C-03 (C, low) — `Processed` commitment can produce events that are later rolled back
-
-The radar subscribes at `CommitmentLevel::Processed` for lowest latency.
-Forks can roll back arb signals or sandwich classifications. Switching
-to `Confirmed` is a one-line change in `core::swaps::build_subscribe_request`
-when a user wants stronger guarantees at the cost of ~2 slot latency.
-
-### R-01 (R, low) — `record` on Ctrl-C may lose buffered data
-
-Tokio's `select!` cancels the inner future when `ctrl_c` wins, dropping
-the `BufWriter`-wrapped `Recorder` without calling `finish()`. The most
-recent few writes may not flush. Cap is small (one `BufWriter`'s
-default capacity, 8 KiB). Workaround for now: rely on `--duration-secs`
-for clean exit. Proper fix: pass a `CancellationToken` into
-`record::run` so it can call `recorder.finish()` on cancel.
-
-### P-01 (P, low) — `arb::detect` is O(P²) per pair, run on every swap
-
-For ≤ 50 pools per pair this is fine (≤ 2 500 comparisons per swap). At
-500+ pools per pair it becomes the bottleneck. Fix would be incremental:
-compute spreads against a sorted-by-price index instead of pairwise.
-
-### P-02 (P, low) — `sandwich::Detector::by_pool` slowly leaks empty deques
-
-We GC stale events only on the same pool's next push. A pool that goes
-silent after one swap keeps its deque entry forever. A periodic
-`gc_inactive(slot_threshold)` method would fix it; not pressing for
-v0.1 since pool counts on Solana are bounded.
-
-### U-01 (U, medium) — arb output ordering is non-deterministic
-
-`PoolMap.pairs()` iterates a `HashMap`, so `arb::detect` returns events
-in random order. Bad for golden-file replay tests. v0.2 should sort by
-`(slot, pair, spread_bps desc)` for stability.
+update price. **Why deferred**: this needs per-DEX pool-account
+decoders. Raydium AMM v4's reserve fields live on separate vault
+token accounts (not the pool account), and Whirlpools needs sqrt-price
+math from the `Whirlpool` account body. Both are doable but each is
+~200-400 LoC of byte parsing — the right scope for a follow-up PR
+with proper fixture-based tests.
 
 ---
 

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
 use clap::Parser;
@@ -11,7 +11,7 @@ use mev_radar_core::{
     swaps::{self, SwapsOptions},
 };
 use mev_radar_tui::{Dashboard, DashboardState};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod cli;
@@ -49,7 +49,10 @@ async fn main() -> anyhow::Result<()> {
 
         cli::Command::Swaps { endpoint, stats_interval } => {
             let ep = config.endpoint(&endpoint)?;
-            let opts = SwapsOptions { stats_interval: Duration::from_secs(stats_interval) };
+            let opts = SwapsOptions {
+                stats_interval: Duration::from_secs(stats_interval),
+                commitment: config.runtime.commitment,
+            };
 
             tokio::select! {
                 res = swaps::run(ep, opts, |ev| emit_jsonl("swap", ev)) => {
@@ -82,15 +85,25 @@ async fn main() -> anyhow::Result<()> {
             let opts = RecordOptions {
                 duration: Duration::from_secs(duration_secs),
                 max_messages,
+                commitment: config.runtime.commitment,
             };
 
-            tokio::select! {
-                res = record::run(ep, &out, opts) => {
-                    let n = res?;
-                    tracing::info!(written = n, path = %out.display(), "recorded");
-                }
-                _ = tokio::signal::ctrl_c() => tracing::info!("ctrl-c, shutting down"),
+            // Bridge Ctrl-C into a Notify so record::run can finish()
+            // its writer cleanly instead of being dropped mid-flush.
+            // R-01 in AUDIT.md.
+            let cancel = Arc::new(Notify::new());
+            {
+                let cancel = cancel.clone();
+                tokio::spawn(async move {
+                    if tokio::signal::ctrl_c().await.is_ok() {
+                        tracing::info!("ctrl-c, finishing record cleanly");
+                        cancel.notify_waiters();
+                    }
+                });
             }
+
+            let n = record::run(ep, &out, opts, cancel).await?;
+            tracing::info!(written = n, path = %out.display(), "recorded");
         },
 
         cli::Command::Replay { file } => {

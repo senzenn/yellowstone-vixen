@@ -4,21 +4,21 @@
 //! every `SubscribeUpdate` to a file in `mev-radar-replay`'s on-disk
 //! format. Stops after a configurable duration or `max_messages`.
 
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Duration};
 
 use futures::{sink::SinkExt, stream::StreamExt};
 use mev_radar_dex::program_ids::{raydium_amm_v4_program, whirlpools_program};
 use mev_radar_replay::open_record;
-use tokio::time::Instant;
+use tokio::{sync::Notify, time::Instant};
 use tracing::{info, warn};
 use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
 use yellowstone_grpc_proto::geyser::{
-    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequest,
-    SubscribeRequestFilterTransactions, SubscribeRequestPing,
+    subscribe_update::UpdateOneof, SubscribeRequest, SubscribeRequestFilterTransactions,
+    SubscribeRequestPing,
 };
 
 use crate::{
-    config::EndpointConfig,
+    config::{Commitment, EndpointConfig},
     error::{Error, Result},
 };
 
@@ -28,14 +28,50 @@ const CLIENT_PING_INTERVAL: Duration = Duration::from_secs(10);
 pub struct RecordOptions {
     pub duration: Duration,
     pub max_messages: u64,
+    pub commitment: Commitment,
 }
 
-pub async fn run(endpoint: &EndpointConfig, out: &Path, opts: RecordOptions) -> Result<u64> {
+/// Run the recorder until `opts.duration` / `opts.max_messages` /
+/// `cancel` fires (whichever first). Always finishes the underlying
+/// `Recorder` (flushing the prost frames + shutting the file) before
+/// returning, even on error or cancel — that's R-01 from AUDIT.md.
+pub async fn run(
+    endpoint: &EndpointConfig,
+    out: &Path,
+    opts: RecordOptions,
+    cancel: Arc<Notify>,
+) -> Result<u64> {
     let token = endpoint.resolve_token()?;
     let mut recorder = open_record(out)
         .await
         .map_err(|e| Error::Grpc(format!("open record: {e}")))?;
 
+    let result = run_inner(endpoint, opts, &cancel, &mut recorder, token).await;
+
+    let n = recorder
+        .finish()
+        .await
+        .map_err(|e| Error::Grpc(format!("record finish: {e}")))?;
+
+    match result {
+        Ok(()) => {
+            info!(written = n, "record complete");
+            Ok(n)
+        },
+        Err(e) => {
+            warn!(error = %e, written = n, "record exited with error after flush");
+            Err(e)
+        },
+    }
+}
+
+async fn run_inner(
+    endpoint: &EndpointConfig,
+    opts: RecordOptions,
+    cancel: &Notify,
+    recorder: &mut mev_radar_replay::Recorder<tokio::io::BufWriter<tokio::fs::File>>,
+    token: Option<String>,
+) -> Result<()> {
     let mut client = GeyserGrpcClient::build_from_shared(endpoint.url.clone())
         .map_err(|e| Error::Grpc(format!("invalid endpoint url: {e}")))?
         .x_token(token)
@@ -48,7 +84,7 @@ pub async fn run(endpoint: &EndpointConfig, out: &Path, opts: RecordOptions) -> 
 
     info!(name = %endpoint.name, ?opts, "recording");
 
-    let req = build_request();
+    let req = build_request(opts.commitment);
     let (mut sub_tx, stream) = client
         .subscribe_with_request(Some(req))
         .await
@@ -62,7 +98,12 @@ pub async fn run(endpoint: &EndpointConfig, out: &Path, opts: RecordOptions) -> 
 
     loop {
         tokio::select! {
-            () = tokio::time::sleep_until(stop_at) => break,
+            () = cancel.notified() => {
+                info!(written, "record cancelled");
+                return Ok(());
+            }
+
+            () = tokio::time::sleep_until(stop_at) => return Ok(()),
 
             () = tokio::time::sleep_until(ping_deadline) => {
                 ping_id = ping_id.wrapping_add(1);
@@ -79,7 +120,7 @@ pub async fn run(endpoint: &EndpointConfig, out: &Path, opts: RecordOptions) -> 
             msg = stream.next() => {
                 let Some(msg) = msg else {
                     warn!("stream closed early");
-                    break;
+                    return Ok(());
                 };
                 let update = msg.map_err(|e| Error::Grpc(format!("stream: {e}")))?;
 
@@ -101,22 +142,14 @@ pub async fn run(endpoint: &EndpointConfig, out: &Path, opts: RecordOptions) -> 
                 written += 1;
 
                 if opts.max_messages > 0 && written >= opts.max_messages {
-                    break;
+                    return Ok(());
                 }
             }
         }
     }
-
-    let n = recorder
-        .finish()
-        .await
-        .map_err(|e| Error::Grpc(format!("record finish: {e}")))?;
-
-    info!(written = n, "record complete");
-    Ok(n)
 }
 
-fn build_request() -> SubscribeRequest {
+fn build_request(commitment: Commitment) -> SubscribeRequest {
     let mut transactions = HashMap::new();
     transactions.insert(
         "dexes".to_string(),
@@ -134,7 +167,7 @@ fn build_request() -> SubscribeRequest {
     );
     SubscribeRequest {
         transactions,
-        commitment: Some(CommitmentLevel::Processed as i32),
+        commitment: Some(commitment.as_grpc_i32()),
         ..Default::default()
     }
 }

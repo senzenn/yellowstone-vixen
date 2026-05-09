@@ -26,3 +26,9 @@ window_slots = 1
 [runtime]
 # How often the watch loop logs throughput stats.
 stats_interval_secs = 5
+
+# Subscribe-side commitment level. Trade-off:
+#   processed  — lowest latency; signals can be rolled back by a fork.
+#   confirmed  — fork-stable; ~2 slots of added latency.
+#   finalized  — strongest guarantee; ~30 slots of added latency.
+commitment = "processed"

@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::{
-    config::{Config, EndpointConfig},
+    config::{Commitment, Config, EndpointConfig},
     error::Result,
     swaps::{self, SwapsOptions},
 };
@@ -35,6 +35,7 @@ pub enum Event {
 #[derive(Debug, Clone, Copy)]
 pub struct RadarOptions {
     pub stats_interval: Duration,
+    pub commitment: Commitment,
     pub arb: ArbConfig,
     pub sandwich: SandwichConfig,
 }
@@ -44,6 +45,7 @@ impl RadarOptions {
     pub fn from_config(cfg: &Config) -> Self {
         Self {
             stats_interval: Duration::from_secs(cfg.runtime.stats_interval_secs.max(1)),
+            commitment: cfg.runtime.commitment,
             arb: ArbConfig {
                 min_spread_bps: cfg.detector.arb.min_spread_bps,
             },
@@ -76,9 +78,14 @@ pub async fn run(endpoint: &EndpointConfig, opts: RadarOptions, tx: mpsc::Sender
         }
     };
 
+    let mut last_gc_slot: u64 = 0;
+
     swaps::run(
         endpoint,
-        SwapsOptions { stats_interval: opts.stats_interval },
+        SwapsOptions {
+            stats_interval: opts.stats_interval,
+            commitment: opts.commitment,
+        },
         |ev: &SwapEvent| {
             try_send(Event::Swap(ev.clone()));
 
@@ -90,6 +97,14 @@ pub async fn run(endpoint: &EndpointConfig, opts: RadarOptions, tx: mpsc::Sender
 
             for hit in sand.push(ev.clone()) {
                 try_send(Event::Sandwich(hit));
+            }
+
+            // GC the sandwich detector roughly once per slot. Without
+            // this, pools that go silent keep their last events
+            // forever (P-02).
+            if ev.slot > last_gc_slot {
+                sand.gc(ev.slot);
+                last_gc_slot = ev.slot;
             }
         },
     )
